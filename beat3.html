@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Beat 3 — Compounding</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: #0d0c18;
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden;
+    }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<script src="https://cdn.jsdelivr.net/npm/pixi.js@7.3.2/dist/pixi.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.2/dist/gsap.min.js"></script>
+<script>
+'use strict';
+
+const W = 1280, H = 720;
+const app = new PIXI.Application({
+  width: W, height: H, backgroundColor: 0x0d0c18, antialias: true,
+});
+document.body.appendChild(app.view);
+
+const resize = () => {
+  const s = Math.min(window.innerWidth / W, window.innerHeight / H);
+  app.view.style.width  = Math.round(W * s) + 'px';
+  app.view.style.height = Math.round(H * s) + 'px';
+};
+resize();
+window.addEventListener('resize', resize);
+
+const stage = app.stage;
+
+// ── Palette ────────────────────────────────────────────────────────────────
+const C = {
+  bg:      0x0d0c18,
+  amber:   0xFFAA22,
+  dim:     0x2a3a50,
+  settled: 0x3d5068,   // pill color once "absorbed"
+  text:    0xd6d6ea,
+  muted:   0x3a4560,
+  week:    0xe8e8f8,
+  count:   0x667799,
+  divider: 0x181728,
+};
+
+const T = (size, fill, mono = false, opts = {}) =>
+  new PIXI.TextStyle({
+    fontFamily: mono
+      ? '"Courier New", monospace'
+      : '"Georgia", "Times New Roman", serif',
+    fontSize: size, fill,
+    fontWeight: opts.bold ? '700' : '300',
+    fontStyle:  opts.italic ? 'italic' : 'normal',
+    letterSpacing: opts.ls || 0,
+    align: opts.align || 'center',
+    wordWrap: !!opts.wrap, wordWrapWidth: opts.wrap || 700,
+  });
+
+// ── Left panel — week counter ──────────────────────────────────────────────
+const LCX = 195;   // left column centre x
+
+const weekLabel = new PIXI.Text('Week', T(18, C.muted));
+weekLabel.anchor.set(0.5, 0.5);
+weekLabel.x = LCX; weekLabel.y = 238;
+weekLabel.alpha = 0;
+stage.addChild(weekLabel);
+
+const weekNum = new PIXI.Text('1', T(112, C.week, false, { bold: true }));
+weekNum.anchor.set(0.5, 0.5);
+weekNum.x = LCX; weekNum.y = 330;
+weekNum.alpha = 0;
+stage.addChild(weekNum);
+
+const skillCount = new PIXI.Text('0 skills', T(18, C.count));
+skillCount.anchor.set(0.5, 0.5);
+skillCount.x = LCX; skillCount.y = 406;
+skillCount.alpha = 0;
+stage.addChild(skillCount);
+
+// Thin vertical divider between left and right panels
+const divider = new PIXI.Graphics();
+divider.lineStyle(1, C.divider, 1);
+divider.moveTo(370, 60);
+divider.lineTo(370, H - 60);
+divider.alpha = 0;
+stage.addChild(divider);
+
+// ── Skill batches ──────────────────────────────────────────────────────────
+const BATCHES = [
+  { week: 1, skills: ['fine-tuning', 'dataset-prep'] },
+  { week: 2, skills: ['axolotl', 'github-review', 'debug-cuda'] },
+  { week: 3, skills: ['deploy-modal', 'write-paper', 'arxiv-search', 'obsidian'] },
+  { week: 4, skills: ['slack-report', 'wandb-logging', 'eval-harness', 'lora-merge', 'vllm-serve'] },
+  { week: 5, skills: ['model-card', 'hf-upload', 'benchmark-run', 'ckpt-manager', 'data-augment'] },
+  { week: 6, skills: ['prompt-cache', 'multi-gpu', 'flash-attn', 'tokenizer-fix', 'retrieval-eval'] },
+  { week: 7, skills: ['rlhf-prep', 'dpo-train', 'reward-model', 'safety-eval', 'red-team'] },
+  { week: 8, skills: ['synthetic-data', 'annotation', 'ablation-run', 'serve-api', 'batch-infer', 'release-notes'] },
+];
+
+const ALL_SKILLS = BATCHES.flatMap(b => b.skills);
+
+// ── Grid layout ────────────────────────────────────────────────────────────
+const COLS   = 5;
+const PILL_W = 156;
+const PILL_H = 30;
+const GAP_X  = 9;
+const GAP_Y  = 9;
+const GRID_X = 398;
+const GRID_Y = 90;
+
+// ── Pill factory ───────────────────────────────────────────────────────────
+function makePill(name, index) {
+  const col = index % COLS;
+  const row = Math.floor(index / COLS);
+  const fx  = GRID_X + col * (PILL_W + GAP_X);
+  const fy  = GRID_Y + row * (PILL_H + GAP_Y);
+
+  const c = new PIXI.Container();
+  c.x = fx;
+  c.y = fy + 14;   // start below final position (rise-in)
+  c.alpha = 0;
+  c._fy = fy;
+  c._name = name;
+
+  // Amber border + fill (new state)
+  const bgNew = new PIXI.Graphics();
+  bgNew.lineStyle(1, C.amber, 0.75);
+  bgNew.beginFill(C.amber, 0.1);
+  bgNew.drawRoundedRect(0, 0, PILL_W, PILL_H, 5);
+  bgNew.endFill();
+  bgNew.name = 'bgNew';
+  c.addChild(bgNew);
+
+  // Settled border + fill (fades in later)
+  const bgOld = new PIXI.Graphics();
+  bgOld.lineStyle(1, C.settled, 0.4);
+  bgOld.beginFill(C.settled, 0.08);
+  bgOld.drawRoundedRect(0, 0, PILL_W, PILL_H, 5);
+  bgOld.endFill();
+  bgOld.alpha = 0;
+  bgOld.name = 'bgOld';
+  c.addChild(bgOld);
+
+  const txt = new PIXI.Text(name, T(13, C.amber, true));
+  txt.name = 'txt';
+  txt.anchor.set(0.5, 0.5);
+  txt.x = PILL_W / 2;
+  txt.y = PILL_H / 2;
+  c.addChild(txt);
+
+  stage.addChild(c);
+  return c;
+}
+
+// Pre-build all pills
+const pills = ALL_SKILLS.map((name, i) => makePill(name, i));
+
+// Assign pills back to batches
+let ptr = 0;
+BATCHES.forEach(b => {
+  b.pills = b.skills.map(() => pills[ptr++]);
+});
+
+// ── Caption ────────────────────────────────────────────────────────────────
+const caption = new PIXI.Text('', T(26, C.text, false, {
+  italic: true, align: 'center', wrap: 760,
+}));
+caption.anchor.set(0.5, 0.5);
+caption.x = W / 2; caption.y = 656;
+caption.alpha = 0;
+stage.addChild(caption);
+
+// ── Overlay ────────────────────────────────────────────────────────────────
+const overlay = new PIXI.Graphics();
+overlay.beginFill(C.bg, 1); overlay.drawRect(0, 0, W, H); overlay.endFill();
+overlay.alpha = 0;
+stage.addChild(overlay);
+
+// ── Settle helper — turns a pill from amber to muted ─────────────────────
+function settlePills(pillArr, tl, position) {
+  pillArr.forEach(p => {
+    tl.to(p.getChildByName('bgNew'), { alpha: 0, duration: 0.7 }, position);
+    tl.to(p.getChildByName('bgOld'), { alpha: 1, duration: 0.7 }, position);
+    tl.to(p.getChildByName('txt'),   { style: { fill: C.settled }, duration: 0 }, position);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TIMELINE
+// ═══════════════════════════════════════════════════════════════════════════
+const tl = gsap.timeline({ defaults: { ease: 'power2.out' } });
+
+let totalSoFar = 0;
+
+// ── Intro: left panel fades in ────────────────────────────────────────────
+tl.to([weekLabel, weekNum, skillCount, divider], { alpha: 1, duration: 1.0 }, 0.5);
+
+// ── Week loop ─────────────────────────────────────────────────────────────
+BATCHES.forEach((batch, bi) => {
+
+  // Week number update — scale-pop
+  if (bi > 0) {
+    tl.call(() => {
+      weekNum.text = String(batch.week);
+      weekNum.scale.set(0.82);
+    }, null, '+=0.65');
+    tl.to(weekNum.scale, { x: 1, y: 1, duration: 0.35, ease: 'back.out(2)' });
+
+    // Settle previous batch (they dim as new ones arrive)
+    settlePills(BATCHES[bi - 1].pills, tl, '<');
+  }
+
+  // Pills in this batch rise into place, staggered
+  batch.pills.forEach((pill, pi) => {
+    const pos = (bi === 0 && pi === 0) ? '+=0.4' : `+=${pi === 0 ? 0.35 : 0.22}`;
+    tl.to(pill, { alpha: 1, y: pill._fy, duration: 0.38 }, pos);
+  });
+
+  // Skill count updates after each batch
+  totalSoFar += batch.skills.length;
+  const snap = totalSoFar;
+  tl.call(() => { skillCount.text = `${snap} skills`; }, null, '<0.2');
+});
+
+// Final settle of last batch
+settlePills(BATCHES[BATCHES.length - 1].pills, tl, '+=0.6');
+
+// ── Hold — let it breathe ─────────────────────────────────────────────────
+tl.to({}, { duration: 1.2 });
+
+// ── Caption 1 ─────────────────────────────────────────────────────────────
+tl.to(caption, {
+  alpha: 1, duration: 0.9,
+  onStart() { caption.text = 'It's not generic AI anymore.'; },
+}, '+=0.3');
+
+tl.to({}, { duration: 2.2 });
+
+// ── Caption 2 ─────────────────────────────────────────────────────────────
+tl.to(caption, { alpha: 0, duration: 0.4 });
+tl.to(caption, {
+  alpha: 1, duration: 0.9,
+  onStart() { caption.text = 'It knows how you work.'; },
+}, '+=0.1');
+
+tl.to({}, { duration: 3.0 });
+</script>
+</body>
+</html>
