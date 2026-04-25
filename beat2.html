@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Beat 2 — Anatomy of a Skill</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: #0d0c18;
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden;
+    }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<script src="https://cdn.jsdelivr.net/npm/pixi.js@7.3.2/dist/pixi.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.2/dist/gsap.min.js"></script>
+<script>
+'use strict';
+
+const W = 1280, H = 720;
+const app = new PIXI.Application({
+  width: W, height: H, backgroundColor: 0x0d0c18, antialias: true,
+});
+document.body.appendChild(app.view);
+
+const resize = () => {
+  const s = Math.min(window.innerWidth / W, window.innerHeight / H);
+  app.view.style.width  = Math.round(W * s) + 'px';
+  app.view.style.height = Math.round(H * s) + 'px';
+};
+resize();
+window.addEventListener('resize', resize);
+
+const stage = app.stage;
+
+// ── Palette ────────────────────────────────────────────────────────────────
+const C = {
+  bg:       0x0d0c18,
+  editor:   0x0b0a1a,
+  border:   0x1c1b32,
+  hdr:      0x141326,
+  lnum:     0x2c2c4a,
+  dash:     0x363658,
+  key:      0x56b6d6,   // YAML keys  — blue
+  val:      0xc9956a,   // string values — warm amber-tan
+  num:      0x7dbb6c,   // version numbers — green
+  head:     0xe0e0f0,   // markdown # headings
+  body:     0x596070,   // body text
+  amber:    0xFFAA22,
+  text:     0xd6d6ea,
+  muted:    0x3a4560,
+  success:  0x44bb88,
+};
+
+// ── Typography ─────────────────────────────────────────────────────────────
+const T = (size, fill, mono = false, opts = {}) =>
+  new PIXI.TextStyle({
+    fontFamily: mono
+      ? '"Courier New", "Lucida Console", monospace'
+      : '"Georgia", "Times New Roman", serif',
+    fontSize: size, fill,
+    fontWeight: opts.bold ? '700' : '300',
+    fontStyle:  opts.italic ? 'italic' : 'normal',
+    letterSpacing: opts.ls || 0,
+    align: opts.align || 'left',
+    wordWrap: !!opts.wrap, wordWrapWidth: opts.wrap || 600,
+  });
+
+// ── Editor geometry ─────────────────────────────────────────────────────────
+const EX = 64,  EY = 44;
+const EW = 530, EH = 580;
+const HDR_H  = 36;
+const LN_W   = 34;          // line-number gutter width
+const CODE_X = EX + LN_W + 10;
+const CODE_Y = EY + HDR_H + 10;
+const LH     = 23;           // line height
+
+// ── Title card ─────────────────────────────────────────────────────────────
+const titleCard = new PIXI.Text('What a skill looks like.', T(52, C.text, false, { ls: 1 }));
+titleCard.anchor.set(0.5, 0.5);
+titleCard.x = W / 2; titleCard.y = H / 2;
+titleCard.alpha = 0;
+stage.addChild(titleCard);
+
+// ── Editor shell ───────────────────────────────────────────────────────────
+const editor = new PIXI.Container();
+editor.alpha = 0;
+stage.addChild(editor);
+
+// Background
+const ebg = new PIXI.Graphics();
+ebg.lineStyle(1, C.border, 1);
+ebg.beginFill(C.editor, 1);
+ebg.drawRoundedRect(EX, EY, EW, EH, 7);
+ebg.endFill();
+// Header bar
+ebg.beginFill(C.hdr, 1);
+ebg.drawRoundedRect(EX + 1, EY + 1, EW - 2, HDR_H - 1, 6);
+ebg.endFill();
+// Line-number gutter
+ebg.beginFill(0x09091a, 1);
+ebg.drawRect(EX + 1, EY + HDR_H, LN_W, EH - HDR_H - 1);
+ebg.endFill();
+editor.addChild(ebg);
+
+// Window dots
+[0xcc4040, 0xcc9920, 0x40aa60].forEach((col, i) => {
+  const d = new PIXI.Graphics();
+  d.beginFill(col, 0.55);
+  d.drawCircle(EX + 14 + i * 17, EY + HDR_H / 2, 5);
+  d.endFill();
+  editor.addChild(d);
+});
+
+// Filename tab
+const fileTab = new PIXI.Text('SKILL.md', T(13, C.amber, true, { bold: true }));
+fileTab.x = EX + 60; fileTab.y = EY + 9;
+editor.addChild(fileTab);
+
+// ── Code line factory ──────────────────────────────────────────────────────
+// A "line" is a row of {text, color} tokens rendered at a given y.
+// Returns a Container added to `editor`, initially alpha=0.
+
+function makeLine(lineIdx, tokens) {
+  const row = new PIXI.Container();
+  row.y = CODE_Y + lineIdx * LH;
+  row.alpha = 0;
+  editor.addChild(row);
+
+  // line number
+  if (lineIdx >= 0) {
+    const ln = new PIXI.Text(String(lineIdx + 1), T(12, C.lnum, true));
+    ln.anchor.set(1, 0);
+    ln.x = EX + LN_W - 4;
+    ln.y = 1;
+    row.addChild(ln);
+  }
+
+  // tokens
+  let cx = CODE_X;
+  tokens.forEach(([str, color]) => {
+    if (!str) return;
+    const t = new PIXI.Text(str, T(15, color, true));
+    t.x = cx; t.y = 0;
+    row.addChild(t);
+    cx += t.width;
+  });
+
+  return row;
+}
+
+// ── File content ───────────────────────────────────────────────────────────
+const YAML = [
+  [ ['---', C.dash] ],
+  [ ['name',        C.key], [':  ',   C.body], ['fine-tuning',  C.val] ],
+  [ ['description', C.key], [':  ',   C.body], ['LoRA fine-tuning on custom datasets', C.body] ],
+  [ ['version',     C.key], [':  ',   C.body], ['1.0.0',        C.num] ],
+  [ ['metadata',    C.key], [':',     C.body] ],
+  [ ['  hermes',    C.key], [':',     C.body] ],
+  [ ['    tags',    C.key], [':  ',   C.body], ['[ml, training, lora]', C.dash] ],
+  [ ['---', C.dash] ],
+];
+
+const BODY = [
+  [],   // blank line
+  [ ['# Fine-Tuning Run', C.head] ],
+  [],
+  [ ['## Setup',    C.key] ],
+  [ ['Check GPU availability and install axolotl.', C.body] ],
+  [],
+  [ ['## Training', C.key] ],
+  [ ['Run: ', C.body], ['axolotl train config.yaml', C.val] ],
+  [],
+  [ ['## Monitoring', C.key] ],
+  [ ['Watch loss curve, save checkpoints.', C.body] ],
+];
+
+const yamlRows = YAML.map((tokens, i) => makeLine(i, tokens));
+const bodyRows = BODY.map((tokens, i) => makeLine(YAML.length + i, tokens));
+const allRows  = [...yamlRows, ...bodyRows];
+
+// ── Callout helper ─────────────────────────────────────────────────────────
+// Draws a dashed horizontal connector from the editor's right edge
+// to a label floating on the right. Placed in stage coordinates.
+
+const CALLOUT_X0 = EX + EW + 8;    // line start (just right of editor)
+const CALLOUT_X1 = EX + EW + 28;   // line end / label start
+
+function makeCallout(lineIdx, label) {
+  const c = new PIXI.Container();
+  c.alpha = 0;
+
+  const cy = CODE_Y + lineIdx * LH + LH / 2 - 1;
+
+  // dot at editor edge
+  const g = new PIXI.Graphics();
+  g.beginFill(C.amber, 0.6);
+  g.drawCircle(CALLOUT_X0, cy, 3);
+  g.endFill();
+  // dashed connector (simulated with short segments)
+  g.lineStyle(1, C.amber, 0.4);
+  for (let x = CALLOUT_X0 + 6; x < CALLOUT_X1 - 2; x += 8) {
+    g.moveTo(x, cy);
+    g.lineTo(Math.min(x + 5, CALLOUT_X1 - 2), cy);
+  }
+  c.addChild(g);
+
+  const txt = new PIXI.Text(label, T(15, C.amber, false, { italic: true }));
+  txt.x = CALLOUT_X1 + 4;
+  txt.y = cy - txt.height / 2;
+  c.addChild(txt);
+
+  stage.addChild(c);
+  return c;
+}
+
+// Line indices: 1=name, 2=description, 3=version, YAML.length+1=heading
+const co_name = makeCallout(1, 'how the agent finds it');
+const co_desc = makeCallout(2, 'what it does');
+const co_head = makeCallout(YAML.length + 1, 'instructions it reads');
+
+// ── Version badge (top-right of editor header) ─────────────────────────────
+const verBadge = new PIXI.Text('v1.0.0', T(13, C.num, true));
+verBadge.anchor.set(1, 0.5);
+verBadge.x = EX + EW - 14;
+verBadge.y = EY + HDR_H / 2;
+verBadge.alpha = 0;
+editor.addChild(verBadge);
+
+// ── Right-side reuse panel ─────────────────────────────────────────────────
+// Appears in the empty right half of the canvas during the reuse beat.
+const RX = EX + EW + 90;   // right panel x
+
+const reusePanel = new PIXI.Container();
+reusePanel.alpha = 0;
+stage.addChild(reusePanel);
+
+function makeCmd(txt, y, color = C.muted) {
+  const t = new PIXI.Text(txt, T(16, color, true));
+  t.x = RX; t.y = y;
+  reusePanel.addChild(t);
+  return t;
+}
+function makeStep(txt, y) {
+  const row = new PIXI.Container();
+  row.y = y; row.alpha = 0;
+
+  const dot = new PIXI.Graphics();
+  dot.beginFill(C.success, 0.8);
+  dot.drawCircle(RX + 7, 9, 3.5);
+  dot.endFill();
+  row.addChild(dot);
+
+  const t = new PIXI.Text(txt, T(15, C.body, true));
+  t.x = RX + 18; t.y = 0;
+  row.addChild(t);
+
+  const chk = new PIXI.Text('✓', T(13, C.success));
+  chk.x = t.x + t.width + 8; chk.y = 0; chk.alpha = 0;
+  row.addChild(chk);
+
+  stage.addChild(row);
+  return { row, chk };
+}
+
+const cmdText   = makeCmd('> skill_view("fine-tuning")', 200, C.muted);
+const cmdResult = makeCmd('loaded  SKILL.md', 226, 0x3a6040);
+cmdText.alpha = cmdResult.alpha = 0;
+
+const stepDefs = [
+  'loading SKILL.md',
+  'launching training loop',
+  'monitoring loss',
+];
+const steps = stepDefs.map((s, i) => makeStep(s, 270 + i * 30));
+
+// ── Caption ────────────────────────────────────────────────────────────────
+const caption = new PIXI.Text('', T(26, C.text, false, {
+  italic: true, align: 'center', wrap: 740,
+}));
+caption.anchor.set(0.5, 0.5);
+caption.x = W / 2; caption.y = 658;
+caption.alpha = 0;
+stage.addChild(caption);
+
+// ── Overlay ────────────────────────────────────────────────────────────────
+const overlay = new PIXI.Graphics();
+overlay.beginFill(C.bg, 1); overlay.drawRect(0, 0, W, H); overlay.endFill();
+overlay.alpha = 0;
+stage.addChild(overlay);
+
+// ── Highlight helper (tints a row's background) ───────────────────────────
+function makeHighlight(lineIdx) {
+  const h = new PIXI.Graphics();
+  h.beginFill(C.amber, 0.07);
+  h.drawRect(EX + LN_W + 1, CODE_Y + lineIdx * LH - 1, EW - LN_W - 2, LH + 2);
+  h.endFill();
+  h.alpha = 0;
+  editor.addChildAt(h, 1); // behind text, above bg
+  return h;
+}
+const hl_name = makeHighlight(1);
+const hl_desc = makeHighlight(2);
+const hl_head = makeHighlight(YAML.length + 1);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TIMELINE
+// ═══════════════════════════════════════════════════════════════════════════
+const tl = gsap.timeline({ defaults: { ease: 'power2.inOut' } });
+
+// ── Phase 1: title card ───────────────────────────────────────────────────
+tl.to(titleCard, { alpha: 1, duration: 1.0 }, 0.5);
+tl.to(titleCard, { alpha: 0, duration: 0.6 }, '+=1.6');
+
+// ── Phase 2: editor + YAML frontmatter ────────────────────────────────────
+tl.to(editor, { alpha: 1, duration: 0.7 }, '+=0.2');
+
+// type in YAML lines fast
+yamlRows.forEach((row, i) => {
+  tl.to(row, { alpha: 1, duration: 0.07 }, i === 0 ? '+=0.4' : '+=0.10');
+});
+
+// brief pause after frontmatter closes
+tl.to({}, { duration: 0.5 });
+
+// ── Phase 3: callouts highlight name + description ────────────────────────
+tl.to(hl_name, { alpha: 1, duration: 0.3 });
+tl.to(co_name, { alpha: 1, duration: 0.4 }, '-=0.2');
+
+tl.to(hl_desc, { alpha: 1, duration: 0.3 }, '+=0.4');
+tl.to(co_desc, { alpha: 1, duration: 0.4 }, '-=0.2');
+
+tl.to({}, { duration: 1.4 });
+
+// fade callouts + highlights
+tl.to([co_name, co_desc, hl_name, hl_desc], { alpha: 0, duration: 0.35 });
+
+// ── Phase 4: markdown body types in ──────────────────────────────────────
+bodyRows.forEach((row, i) => {
+  tl.to(row, { alpha: 1, duration: 0.08 }, i === 0 ? '+=0.2' : '+=0.10');
+});
+
+tl.to({}, { duration: 0.3 });
+
+// callout on heading
+tl.to(hl_head, { alpha: 1, duration: 0.3 });
+tl.to(co_head, { alpha: 1, duration: 0.4 }, '-=0.2');
+
+// caption 1
+tl.to(caption, {
+  alpha: 1, duration: 0.7,
+  onStart() { caption.text = 'No code. No training. Just text.'; },
+}, '+=0.5');
+
+tl.to({}, { duration: 2.2 });
+
+// ── Phase 5: reuse — skill loaded, task runs in 3 steps ──────────────────
+tl.to([caption, co_head, hl_head], { alpha: 0, duration: 0.35 });
+
+// version badge appears (already know the file is v1.0.0)
+tl.to(verBadge, { alpha: 1, duration: 0.5 }, '+=0.2');
+
+// skill_view command appears on right
+tl.to(cmdText,   { alpha: 1, duration: 0.4 }, '+=0.6');
+tl.to(cmdResult, { alpha: 1, duration: 0.4 }, '+=0.3');
+
+// 3 steps with checks
+steps.forEach(({ row, chk }, i) => {
+  tl.to(row, { alpha: 1, duration: 0.22 }, i === 0 ? '+=0.35' : '+=0.28');
+  tl.to(chk, { alpha: 1, duration: 0.2  }, '+=0.20');
+});
+
+tl.to({}, { duration: 0.5 });
+
+// ── Phase 6: version increments — agent improved the skill ────────────────
+tl.call(() => {
+  verBadge.text  = 'v1.1.0';
+  verBadge.style = T(13, C.amber, true, { bold: true });
+});
+tl.to(verBadge.scale, { x: 1.2, y: 1.2, duration: 0.2, ease: 'power1.in' });
+tl.to(verBadge.scale, { x: 1.0, y: 1.0, duration: 0.3, ease: 'bounce.out' });
+
+// caption 2
+tl.to(caption, {
+  alpha: 1, duration: 0.8,
+  onStart() { caption.text = 'Creates it. Refines it. Reuses it.'; },
+}, '+=0.3');
+
+tl.to({}, { duration: 3.0 });
+</script>
+</body>
+</html>
