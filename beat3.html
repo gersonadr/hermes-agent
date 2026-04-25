@@ -38,15 +38,16 @@ const stage = app.stage;
 
 // ── Palette ────────────────────────────────────────────────────────────────
 const C = {
-  bg:      0x0d0c18,
-  amber:   0xFFAA22,
-  dim:     0x2a3a50,
-  settled: 0x3d5068,   // pill color once "absorbed"
-  text:    0xd6d6ea,
-  muted:   0x3a4560,
-  week:    0xe8e8f8,
-  count:   0x667799,
-  divider: 0x181728,
+  bg:       0x0d0c18,
+  amber:    0xFFAA22,
+  amberDim: 0x7a4e10,
+  settled:  0x2e3f55,
+  border:   0x3d5268,
+  text:     0xd6d6ea,
+  muted:    0x334455,
+  line:     0x1e2e40,
+  lineLit:  0xFFAA22,
+  capstone: 0xFFCC55,   // ship-feature gets warmer tone
 };
 
 const T = (size, fill, mono = false, opts = {}) =>
@@ -62,192 +63,220 @@ const T = (size, fill, mono = false, opts = {}) =>
     wordWrap: !!opts.wrap, wordWrapWidth: opts.wrap || 700,
   });
 
-// ── Left panel — week counter ──────────────────────────────────────────────
-const LCX = 195;   // left column centre x
+// ── Graph definition ───────────────────────────────────────────────────────
+//
+//                     [ ship-feature ]            ← Layer 4
+//                      /             \
+//             [ code-review ]   [ deploy-staging ] ← Layer 3
+//              /         \       /          \
+//      [fix-test]   [trace-error]   [open-pr]     ← Layer 2
+//          |               |            |
+//      [run-tests]    [tail-logs]  [git-branch]   ← Layer 1
+//
 
-const weekLabel = new PIXI.Text('Week', T(18, C.muted));
-weekLabel.anchor.set(0.5, 0.5);
-weekLabel.x = LCX; weekLabel.y = 238;
-weekLabel.alpha = 0;
-stage.addChild(weekLabel);
+const PILL_W = 172, PILL_H = 34;
 
-const weekNum = new PIXI.Text('1', T(112, C.week, false, { bold: true }));
-weekNum.anchor.set(0.5, 0.5);
-weekNum.x = LCX; weekNum.y = 330;
-weekNum.alpha = 0;
-stage.addChild(weekNum);
+// Node: { id, label, layer, cx, cy }   (cx/cy = pill centre in canvas px)
+const L1Y = 616, L2Y = 474, L3Y = 330, L4Y = 186;
 
-const skillCount = new PIXI.Text('0 skills', T(18, C.count));
-skillCount.anchor.set(0.5, 0.5);
-skillCount.x = LCX; skillCount.y = 406;
-skillCount.alpha = 0;
-stage.addChild(skillCount);
+const NODES = {
+  // Layer 1 — primitives
+  'run-tests':  { label: 'run-tests',  layer: 1, cx: 240,  cy: L1Y },
+  'tail-logs':  { label: 'tail-logs',  layer: 1, cx: 640,  cy: L1Y },
+  'git-branch': { label: 'git-branch', layer: 1, cx: 1040, cy: L1Y },
 
-// Thin vertical divider between left and right panels
-const divider = new PIXI.Graphics();
-divider.lineStyle(1, C.divider, 1);
-divider.moveTo(370, 60);
-divider.lineTo(370, H - 60);
-divider.alpha = 0;
-stage.addChild(divider);
+  // Layer 2 — diagnostics
+  'fix-test':     { label: 'fix-test',     layer: 2, cx: 240,  cy: L2Y },
+  'trace-error':  { label: 'trace-error',  layer: 2, cx: 640,  cy: L2Y },
+  'open-pr':      { label: 'open-pr',      layer: 2, cx: 1040, cy: L2Y },
 
-// ── Skill batches ──────────────────────────────────────────────────────────
-// Skills every developer does constantly — and has always had to re-explain.
-const BATCHES = [
-  { week: 1, skills: ['debug-async', 'write-tests'] },
-  { week: 2, skills: ['pr-review', 'lint-fix', 'commit-msg'] },
-  { week: 3, skills: ['deploy-prod', 'check-logs', 'rollback', 'docker-build'] },
-  { week: 4, skills: ['db-migrate', 'seed-data', 'env-setup', 'ci-fix', 'git-rebase'] },
-  { week: 5, skills: ['error-trace', 'perf-profile', 'api-docs', 'refactor', 'code-review'] },
-  { week: 6, skills: ['test-coverage', 'mock-setup', 'type-check', 'dep-update', 'secret-mgr'] },
-  { week: 7, skills: ['feature-flag', 'ab-test', 'metrics-dash', 'on-call', 'incident-rca'] },
-  { week: 8, skills: ['release-cut', 'changelog', 'arch-review', 'postmortem', 'runbook', 'onboarding'] },
+  // Layer 3 — workflows
+  'code-review':    { label: 'code-review',    layer: 3, cx: 440, cy: L3Y },
+  'deploy-staging': { label: 'deploy-staging', layer: 3, cx: 840, cy: L3Y },
+
+  // Layer 4 — orchestration
+  'ship-feature': { label: 'ship-feature', layer: 4, cx: 640, cy: L4Y, capstone: true },
+};
+
+// Edges: [sourceId, targetId]
+const EDGES = [
+  // L1 → L2  (straight vertical, same x)
+  ['run-tests',  'fix-test'],
+  ['tail-logs',  'trace-error'],
+  ['git-branch', 'open-pr'],
+
+  // L2 → L3  (converging diagonals)
+  ['fix-test',    'code-review'],
+  ['trace-error', 'code-review'],
+  ['trace-error', 'deploy-staging'],
+  ['open-pr',     'deploy-staging'],
+
+  // L3 → L4
+  ['code-review',    'ship-feature'],
+  ['deploy-staging', 'ship-feature'],
 ];
 
-const ALL_SKILLS = BATCHES.flatMap(b => b.skills);
+// ── Build pill containers ──────────────────────────────────────────────────
+const nodePills = {};   // id → Container
 
-// ── Grid layout ────────────────────────────────────────────────────────────
-const COLS   = 5;
-const PILL_W = 156;
-const PILL_H = 30;
-const GAP_X  = 9;
-const GAP_Y  = 9;
-const GRID_X = 398;
-const GRID_Y = 90;
-
-// ── Pill factory ───────────────────────────────────────────────────────────
-function makePill(name, index) {
-  const col = index % COLS;
-  const row = Math.floor(index / COLS);
-  const fx  = GRID_X + col * (PILL_W + GAP_X);
-  const fy  = GRID_Y + row * (PILL_H + GAP_Y);
-
+Object.entries(NODES).forEach(([id, n]) => {
   const c = new PIXI.Container();
-  c.x = fx;
-  c.y = fy + 14;   // start below final position (rise-in)
+  c.x = n.cx - PILL_W / 2;
+  c.y = n.cy - PILL_H / 2 + 16;  // start below final pos (rise-in)
   c.alpha = 0;
-  c._fy = fy;
-  c._name = name;
+  c._finalY = n.cy - PILL_H / 2;
 
-  // Amber border + fill (new state)
-  const bgNew = new PIXI.Graphics();
-  bgNew.lineStyle(1, C.amber, 0.75);
-  bgNew.beginFill(C.amber, 0.1);
-  bgNew.drawRoundedRect(0, 0, PILL_W, PILL_H, 5);
-  bgNew.endFill();
-  bgNew.name = 'bgNew';
-  c.addChild(bgNew);
+  const isCapstone = !!n.capstone;
+  const borderCol  = isCapstone ? C.capstone : C.amber;
+  const fillAlpha  = isCapstone ? 0.14 : 0.09;
+  const pillW      = isCapstone ? PILL_W + 20 : PILL_W;
 
-  // Settled border + fill (fades in later)
-  const bgOld = new PIXI.Graphics();
-  bgOld.lineStyle(1, C.settled, 0.4);
-  bgOld.beginFill(C.settled, 0.08);
-  bgOld.drawRoundedRect(0, 0, PILL_W, PILL_H, 5);
-  bgOld.endFill();
-  bgOld.alpha = 0;
-  bgOld.name = 'bgOld';
-  c.addChild(bgOld);
+  const bg = new PIXI.Graphics();
+  bg.lineStyle(isCapstone ? 1.5 : 1, borderCol, 0.8);
+  bg.beginFill(borderCol, fillAlpha);
+  bg.drawRoundedRect(isCapstone ? -10 : 0, 0, pillW, PILL_H, 6);
+  bg.endFill();
+  c.addChild(bg);
 
-  const txt = new PIXI.Text(name, T(13, C.amber, true));
-  txt.name = 'txt';
+  const txt = new PIXI.Text(n.label, T(isCapstone ? 16 : 14, borderCol, true, { bold: isCapstone }));
   txt.anchor.set(0.5, 0.5);
   txt.x = PILL_W / 2;
   txt.y = PILL_H / 2;
   c.addChild(txt);
 
   stage.addChild(c);
-  return c;
-}
+  nodePills[id] = c;
+});
 
-// Pre-build all pills
-const pills = ALL_SKILLS.map((name, i) => makePill(name, i));
+// ── Build connector lines ──────────────────────────────────────────────────
+const edgeGraphics = [];   // { g, litG }  — dim version + bright version
 
-// Assign pills back to batches
-let ptr = 0;
-BATCHES.forEach(b => {
-  b.pills = b.skills.map(() => pills[ptr++]);
+const connLayer = new PIXI.Container();   // sits below pills
+stage.addChildAt(connLayer, 0);
+
+EDGES.forEach(([srcId, tgtId]) => {
+  const src = NODES[srcId];
+  const tgt = NODES[tgtId];
+
+  // Line runs from top-centre of src pill to bottom-centre of tgt pill
+  const x1 = src.cx, y1 = src.cy - PILL_H / 2;    // src top
+  const x2 = tgt.cx, y2 = tgt.cy + PILL_H / 2;    // tgt bottom
+
+  // Dim line (always visible once drawn)
+  const g = new PIXI.Graphics();
+  g.lineStyle(1, C.line, 1);
+  g.moveTo(x1, y1);
+  g.lineTo(x2, y2);
+  g.alpha = 0;
+  connLayer.addChild(g);
+
+  // Lit line (amber, fades in on final pulse)
+  const litG = new PIXI.Graphics();
+  litG.lineStyle(1.5, C.lineLit, 0.7);
+  litG.moveTo(x1, y1);
+  litG.lineTo(x2, y2);
+  litG.alpha = 0;
+  connLayer.addChild(litG);
+
+  edgeGraphics.push({ g, litG, src: srcId, tgt: tgtId });
+});
+
+// ── Layer label tags (left margin) ────────────────────────────────────────
+const LAYER_LABELS = [
+  { text: 'primitive',      y: L1Y, alpha: 0 },
+  { text: 'diagnostic',     y: L2Y, alpha: 0 },
+  { text: 'workflow',       y: L3Y, alpha: 0 },
+  { text: 'orchestration',  y: L4Y, alpha: 0 },
+];
+const layerTags = LAYER_LABELS.map(({ text, y }) => {
+  const t = new PIXI.Text(text, T(11, C.muted, true));
+  t.anchor.set(1, 0.5);
+  t.x = 72; t.y = y;
+  t.alpha = 0;
+  stage.addChild(t);
+  return t;
 });
 
 // ── Caption ────────────────────────────────────────────────────────────────
-const caption = new PIXI.Text('', T(26, C.text, false, {
-  italic: true, align: 'center', wrap: 760,
+const caption = new PIXI.Text('', T(28, C.text, false, {
+  italic: true, align: 'center', wrap: 780,
 }));
 caption.anchor.set(0.5, 0.5);
-caption.x = W / 2; caption.y = 656;
+caption.x = W / 2; caption.y = 662;
 caption.alpha = 0;
 stage.addChild(caption);
 
-// ── Overlay ────────────────────────────────────────────────────────────────
-const overlay = new PIXI.Graphics();
-overlay.beginFill(C.bg, 1); overlay.drawRect(0, 0, W, H); overlay.endFill();
-overlay.alpha = 0;
-stage.addChild(overlay);
+// ── Helpers ────────────────────────────────────────────────────────────────
+function revealPill(tl, id, pos) {
+  const p = nodePills[id];
+  tl.to(p, { alpha: 1, y: p._finalY, duration: 0.45, ease: 'power2.out' }, pos);
+}
 
-// ── Settle helper — turns a pill from amber to muted ─────────────────────
-function settlePills(pillArr, tl, position) {
-  pillArr.forEach(p => {
-    tl.to(p.getChildByName('bgNew'), { alpha: 0, duration: 0.7 }, position);
-    tl.to(p.getChildByName('bgOld'), { alpha: 1, duration: 0.7 }, position);
-    tl.to(p.getChildByName('txt'),   { style: { fill: C.settled }, duration: 0 }, position);
-  });
+function revealEdgesTo(tl, targetId, pos) {
+  edgeGraphics
+    .filter(e => e.tgt === targetId)
+    .forEach(e => tl.to(e.g, { alpha: 1, duration: 0.4 }, pos));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TIMELINE
 // ═══════════════════════════════════════════════════════════════════════════
-const tl = gsap.timeline({ defaults: { ease: 'power2.out' } });
+const tl = gsap.timeline({ defaults: { ease: 'power2.inOut' } });
 
-let totalSoFar = 0;
+// ── Layer 1: primitives appear slowly ────────────────────────────────────
+tl.to(layerTags[0], { alpha: 1, duration: 0.5 }, 0.5);
+revealPill(tl, 'run-tests',  '+=0.6');
+revealPill(tl, 'tail-logs',  '+=0.55');
+revealPill(tl, 'git-branch', '+=0.55');
 
-// ── Intro: left panel fades in ────────────────────────────────────────────
-tl.to([weekLabel, weekNum, skillCount, divider], { alpha: 1, duration: 1.0 }, 0.5);
+// ── Layer 2: lines draw, then diagnostics rise ────────────────────────────
+tl.to(layerTags[1], { alpha: 1, duration: 0.4 }, '+=0.7');
+revealEdgesTo(tl, 'fix-test',    '<');
+revealEdgesTo(tl, 'trace-error', '<');
+revealEdgesTo(tl, 'open-pr',     '<');
 
-// ── Week loop ─────────────────────────────────────────────────────────────
-BATCHES.forEach((batch, bi) => {
+revealPill(tl, 'fix-test',    '+=0.3');
+revealPill(tl, 'trace-error', '+=0.4');
+revealPill(tl, 'open-pr',     '+=0.4');
 
-  // Week number update — scale-pop
-  if (bi > 0) {
-    tl.call(() => {
-      weekNum.text = String(batch.week);
-      weekNum.scale.set(0.82);
-    }, null, '+=0.65');
-    tl.to(weekNum.scale, { x: 1, y: 1, duration: 0.35, ease: 'back.out(2)' });
+// ── Layer 3: converging lines, workflow skills ─────────────────────────────
+tl.to(layerTags[2], { alpha: 1, duration: 0.4 }, '+=0.7');
+revealEdgesTo(tl, 'code-review',    '<');
+revealEdgesTo(tl, 'deploy-staging', '<');
 
-    // Settle previous batch (they dim as new ones arrive)
-    settlePills(BATCHES[bi - 1].pills, tl, '<');
-  }
+revealPill(tl, 'code-review',    '+=0.35');
+revealPill(tl, 'deploy-staging', '+=0.45');
 
-  // Pills in this batch rise into place, staggered
-  batch.pills.forEach((pill, pi) => {
-    const pos = (bi === 0 && pi === 0) ? '+=0.4' : `+=${pi === 0 ? 0.35 : 0.22}`;
-    tl.to(pill, { alpha: 1, y: pill._fy, duration: 0.38 }, pos);
-  });
+// ── Layer 4: final convergence to ship-feature ────────────────────────────
+tl.to(layerTags[3], { alpha: 1, duration: 0.4 }, '+=0.8');
+revealEdgesTo(tl, 'ship-feature', '<');
 
-  // Skill count updates after each batch
-  totalSoFar += batch.skills.length;
-  const snap = totalSoFar;
-  tl.call(() => { skillCount.text = `${snap} skills`; }, null, '<0.2');
+revealPill(tl, 'ship-feature', '+=0.4');
+
+// ── Hold — let the graph breathe ──────────────────────────────────────────
+tl.to({}, { duration: 1.4 });
+
+// ── All lines pulse amber simultaneously ──────────────────────────────────
+edgeGraphics.forEach(e => {
+  tl.to(e.litG, { alpha: 1, duration: 0.5 }, '<');
+});
+tl.to({}, { duration: 0.6 });
+edgeGraphics.forEach(e => {
+  tl.to(e.litG, { alpha: 0, duration: 0.8 }, '<');
 });
 
-// Final settle of last batch
-settlePills(BATCHES[BATCHES.length - 1].pills, tl, '+=0.6');
-
-// ── Hold — let it breathe ─────────────────────────────────────────────────
-tl.to({}, { duration: 1.2 });
-
-// ── Caption 1 ─────────────────────────────────────────────────────────────
+// ── Captions ─────────────────────────────────────────────────────────────
 tl.to(caption, {
   alpha: 1, duration: 0.9,
-  onStart() { caption.text = 'Every workflow you\'ve ever re-explained to a tool — remembered.'; },
+  onStart() { caption.text = 'You taught it three things.'; },
 }, '+=0.3');
 
-tl.to({}, { duration: 2.6 });
+tl.to({}, { duration: 2.4 });
 
-// ── Caption 2 ─────────────────────────────────────────────────────────────
 tl.to(caption, { alpha: 0, duration: 0.4 });
 tl.to(caption, {
   alpha: 1, duration: 0.9,
-  onStart() { caption.text = 'Not generic AI. Your AI.'; },
+  onStart() { caption.text = 'It learned to ship features.'; },
 }, '+=0.1');
 
 tl.to({}, { duration: 3.0 });
