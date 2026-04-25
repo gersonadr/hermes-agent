@@ -92,15 +92,16 @@ divider.alpha = 0;
 stage.addChild(divider);
 
 // ── Skill batches ──────────────────────────────────────────────────────────
+// Skills every developer does constantly — and has always had to re-explain.
 const BATCHES = [
-  { week: 1, skills: ['fine-tuning', 'dataset-prep'] },
-  { week: 2, skills: ['axolotl', 'github-review', 'debug-cuda'] },
-  { week: 3, skills: ['deploy-modal', 'write-paper', 'arxiv-search', 'obsidian'] },
-  { week: 4, skills: ['slack-report', 'wandb-logging', 'eval-harness', 'lora-merge', 'vllm-serve'] },
-  { week: 5, skills: ['model-card', 'hf-upload', 'benchmark-run', 'ckpt-manager', 'data-augment'] },
-  { week: 6, skills: ['prompt-cache', 'multi-gpu', 'flash-attn', 'tokenizer-fix', 'retrieval-eval'] },
-  { week: 7, skills: ['rlhf-prep', 'dpo-train', 'reward-model', 'safety-eval', 'red-team'] },
-  { week: 8, skills: ['synthetic-data', 'annotation', 'ablation-run', 'serve-api', 'batch-infer', 'release-notes'] },
+  { week: 1, skills: ['debug-async', 'write-tests'] },
+  { week: 2, skills: ['pr-review', 'lint-fix', 'commit-msg'] },
+  { week: 3, skills: ['deploy-prod', 'check-logs', 'rollback', 'docker-build'] },
+  { week: 4, skills: ['db-migrate', 'seed-data', 'env-setup', 'ci-fix', 'git-rebase'] },
+  { week: 5, skills: ['error-trace', 'perf-profile', 'api-docs', 'refactor', 'code-review'] },
+  { week: 6, skills: ['test-coverage', 'mock-setup', 'type-check', 'dep-update', 'secret-mgr'] },
+  { week: 7, skills: ['feature-flag', 'ab-test', 'metrics-dash', 'on-call', 'incident-rca'] },
+  { week: 8, skills: ['release-cut', 'changelog', 'arch-review', 'postmortem', 'runbook', 'onboarding'] },
 ];
 
 const ALL_SKILLS = BATCHES.flatMap(b => b.skills);
@@ -237,16 +238,16 @@ tl.to({}, { duration: 1.2 });
 // ── Caption 1 ─────────────────────────────────────────────────────────────
 tl.to(caption, {
   alpha: 1, duration: 0.9,
-  onStart() { caption.text = 'It's not generic AI anymore.'; },
+  onStart() { caption.text = 'Every workflow you\'ve ever re-explained to a tool — remembered.'; },
 }, '+=0.3');
 
-tl.to({}, { duration: 2.2 });
+tl.to({}, { duration: 2.6 });
 
 // ── Caption 2 ─────────────────────────────────────────────────────────────
 tl.to(caption, { alpha: 0, duration: 0.4 });
 tl.to(caption, {
   alpha: 1, duration: 0.9,
-  onStart() { caption.text = 'It knows how you work.'; },
+  onStart() { caption.text = 'Not generic AI. Your AI.'; },
 }, '+=0.1');
 
 tl.to({}, { duration: 3.0 });
