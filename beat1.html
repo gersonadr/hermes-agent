@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Beat 1 — Two Kinds of Memory</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: #0d0c18;
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden;
+    }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<script src="https://cdn.jsdelivr.net/npm/pixi.js@7.3.2/dist/pixi.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.2/dist/gsap.min.js"></script>
+<script>
+'use strict';
+
+const W = 1280, H = 720;
+
+const app = new PIXI.Application({
+  width: W, height: H,
+  backgroundColor: 0x0d0c18,
+  antialias: true,
+  resolution: window.devicePixelRatio || 1,
+  autoDensity: true,
+});
+document.body.appendChild(app.view);
+
+// Fit canvas to window, preserve aspect ratio
+function resize() {
+  const scale = Math.min(window.innerWidth / W, window.innerHeight / H);
+  app.view.style.width  = Math.round(W * scale) + 'px';
+  app.view.style.height = Math.round(H * scale) + 'px';
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ── Palette ────────────────────────────────────────────────────────────────
+const DECL_COLOR = 0x58C4DD;  // sky blue
+const PROC_COLOR = 0xFFAA22;  // warm amber
+const TEXT_COLOR = 0xDDDDEE;
+const MUTE_COLOR = 0x556088;
+const LINE_COLOR = 0x252440;
+
+// ── Text style helper ──────────────────────────────────────────────────────
+function style(size, color = TEXT_COLOR, opts = {}) {
+  return new PIXI.TextStyle({
+    fontFamily: opts.mono
+      ? '"Courier New", "Lucida Console", monospace'
+      : '"Georgia", "Palatino Linotype", serif',
+    fontSize: size,
+    fill: color,
+    fontWeight: opts.bold ? '600' : '300',
+    fontStyle: opts.italic ? 'italic' : 'normal',
+    letterSpacing: opts.ls !== undefined ? opts.ls : 0,
+    align: opts.align || 'center',
+    wordWrap: !!opts.wrapWidth,
+    wordWrapWidth: opts.wrapWidth || 400,
+  });
+}
+
+const stage = app.stage;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 1. TITLE  "Memory"
+// ═══════════════════════════════════════════════════════════════════════════
+const title = new PIXI.Text('Memory', style(72, TEXT_COLOR, { ls: 10 }));
+title.anchor.set(0.5, 0.5);
+title.x = W / 2;
+title.y = 90;
+title.alpha = 0;
+stage.addChild(title);
+
+// Thin horizontal rule under title
+const rule = new PIXI.Graphics();
+rule.lineStyle(1, LINE_COLOR, 1);
+rule.moveTo(W / 2 - 180, 128);
+rule.lineTo(W / 2 + 180, 128);
+rule.alpha = 0;
+stage.addChild(rule);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2. BRANCH LINES  (drawn progressively via proxy)
+// ═══════════════════════════════════════════════════════════════════════════
+const lineG = new PIXI.Graphics();
+stage.addChild(lineG);
+
+const LX = 310, RX = 970;   // column centres
+const stemTopY = 134, stemMidY = 205, branchEndY = 248;
+
+const proxy = { stem: 0, branch: 0 };
+
+function redrawLines() {
+  lineG.clear();
+  lineG.lineStyle(1.5, LINE_COLOR, 1);
+
+  // vertical stem
+  const sy = stemTopY + (stemMidY - stemTopY) * proxy.stem;
+  lineG.moveTo(W / 2, stemTopY);
+  lineG.lineTo(W / 2, sy);
+
+  // left + right branches
+  if (proxy.branch > 0) {
+    const b = proxy.branch;
+    lineG.moveTo(W / 2, stemMidY);
+    lineG.lineTo(W / 2 + (LX - W / 2) * b, stemMidY + (branchEndY - stemMidY) * b);
+    lineG.moveTo(W / 2, stemMidY);
+    lineG.lineTo(W / 2 + (RX - W / 2) * b, stemMidY + (branchEndY - stemMidY) * b);
+  }
+}
+redrawLines();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 3. DECLARATIVE COLUMN
+// ═══════════════════════════════════════════════════════════════════════════
+const declCol = new PIXI.Container();
+declCol.x = LX;
+declCol.y = branchEndY + 12;
+declCol.alpha = 0;
+stage.addChild(declCol);
+
+const declHead = new PIXI.Text('Declarative', style(31, DECL_COLOR, { ls: 1 }));
+declHead.anchor.set(0.5, 0);
+declCol.addChild(declHead);
+
+// Underline for the heading
+const declRule = new PIXI.Graphics();
+declRule.lineStyle(1, DECL_COLOR, 0.35);
+declRule.moveTo(-90, 42);
+declRule.lineTo(90, 42);
+declCol.addChild(declRule);
+
+const DECL_ITEMS = ['Facts & events', 'Conversation history', 'What happened'];
+const declBullets = DECL_ITEMS.map((txt, i) => {
+  const t = new PIXI.Text('— ' + txt, style(20, MUTE_COLOR));
+  t.anchor.set(0.5, 0);
+  t.y = 54 + i * 38;
+  t.alpha = 0;
+  declCol.addChild(t);
+  return t;
+});
+
+// Record-stack icon — three stacked thin rectangles
+const declVis = new PIXI.Container();
+declVis.y = 200;
+declVis.alpha = 0;
+declCol.addChild(declVis);
+
+[0, 1, 2].forEach(i => {
+  const g = new PIXI.Graphics();
+  g.lineStyle(1.2, DECL_COLOR, 0.2 + i * 0.2);
+  g.beginFill(DECL_COLOR, 0.03 + i * 0.015);
+  g.drawRoundedRect(-76 - i * 5, -i * 9, 152, 40, 4);
+  g.endFill();
+  // small dot rows inside top record
+  if (i === 2) {
+    [0, 1, 2].forEach(row => {
+      g.lineStyle(0);
+      g.beginFill(DECL_COLOR, 0.25);
+      g.drawRect(-56, 10 + row * 8, 44, 2);
+      g.endFill();
+      g.beginFill(DECL_COLOR, 0.15);
+      g.drawRect(8, 10 + row * 8, 28, 2);
+      g.endFill();
+    });
+  }
+  declVis.addChild(g);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 4. PROCEDURAL COLUMN
+// ═══════════════════════════════════════════════════════════════════════════
+const procCol = new PIXI.Container();
+procCol.x = RX;
+procCol.y = branchEndY + 12;
+procCol.alpha = 0;
+stage.addChild(procCol);
+
+const procHead = new PIXI.Text('Procedural', style(31, PROC_COLOR, { ls: 1 }));
+procHead.anchor.set(0.5, 0);
+procCol.addChild(procHead);
+
+const procRule = new PIXI.Graphics();
+procRule.lineStyle(1, PROC_COLOR, 0.35);
+procRule.moveTo(-90, 42);
+procRule.lineTo(90, 42);
+procCol.addChild(procRule);
+
+const PROC_ITEMS = ['How-to workflows', 'Step-by-step skills', 'Learned behaviors'];
+const procBullets = PROC_ITEMS.map((txt, i) => {
+  const t = new PIXI.Text('— ' + txt, style(20, MUTE_COLOR));
+  t.anchor.set(0.5, 0);
+  t.y = 54 + i * 38;
+  t.alpha = 0;
+  procCol.addChild(t);
+  return t;
+});
+
+// Flowchart icon — three boxes connected by arrows
+const procVis = new PIXI.Container();
+procVis.y = 200;
+procVis.alpha = 0;
+procCol.addChild(procVis);
+
+const BOX_W = 58, BOX_H = 34, FLOW_GAP = 78;
+['Task', 'Steps', 'Done'].forEach((lbl, i) => {
+  const bx = (i - 1) * FLOW_GAP;
+  const boxAlpha = 0.2 + i * 0.2;
+
+  const g = new PIXI.Graphics();
+  g.lineStyle(1.2, PROC_COLOR, 0.4 + i * 0.15);
+  g.beginFill(PROC_COLOR, 0.04 + i * 0.02);
+  g.drawRoundedRect(bx - BOX_W / 2, -BOX_H / 2, BOX_W, BOX_H, 4);
+  g.endFill();
+  procVis.addChild(g);
+
+  const t = new PIXI.Text(lbl, style(13, PROC_COLOR));
+  t.anchor.set(0.5, 0.5);
+  t.x = bx;
+  procVis.addChild(t);
+
+  if (i < 2) {
+    const ax1 = bx + BOX_W / 2 + 2;
+    const ax2 = bx + FLOW_GAP - BOX_W / 2 - 4;
+    const arr = new PIXI.Graphics();
+    arr.lineStyle(1.2, PROC_COLOR, 0.3);
+    arr.moveTo(ax1, 0);
+    arr.lineTo(ax2, 0);
+    arr.moveTo(ax2, 0);
+    arr.lineTo(ax2 - 7, -5);
+    arr.moveTo(ax2, 0);
+    arr.lineTo(ax2 - 7, 5);
+    procVis.addChild(arr);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 5. CAPTION BAR  (bottom)
+// ═══════════════════════════════════════════════════════════════════════════
+const caption = new PIXI.Text('', style(25, TEXT_COLOR, {
+  italic: true, wrapWidth: 800,
+}));
+caption.anchor.set(0.5, 0.5);
+caption.x = W / 2;
+caption.y = 655;
+caption.alpha = 0;
+stage.addChild(caption);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 6. SKILL.md CARD  (appears on procedural side at the end)
+// ═══════════════════════════════════════════════════════════════════════════
+const skillCard = new PIXI.Container();
+skillCard.x = RX;
+skillCard.y = 535;
+skillCard.alpha = 0;
+stage.addChild(skillCard);
+
+const skillBg = new PIXI.Graphics();
+skillBg.lineStyle(1.5, PROC_COLOR, 0.75);
+skillBg.beginFill(PROC_COLOR, 0.07);
+skillBg.drawRoundedRect(-100, -30, 200, 60, 7);
+skillBg.endFill();
+skillCard.addChild(skillBg);
+
+const skillName = new PIXI.Text('SKILL.md', style(18, PROC_COLOR, { mono: true, bold: true, ls: 2 }));
+skillName.anchor.set(0.5, 0.5);
+skillName.y = -9;
+skillCard.addChild(skillName);
+
+const skillSub = new PIXI.Text('written by the agent', style(13, PROC_COLOR, { italic: true }));
+skillSub.anchor.set(0.5, 0);
+skillSub.y = 10;
+skillCard.addChild(skillSub);
+
+// Blinking cursor on the skill card (edit-in-progress feel)
+const cursor = new PIXI.Graphics();
+cursor.beginFill(PROC_COLOR, 0.7);
+cursor.drawRect(68, -17, 2, 13);
+cursor.endFill();
+skillCard.addChild(cursor);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ANIMATION TIMELINE
+// ═══════════════════════════════════════════════════════════════════════════
+const tl = gsap.timeline({ defaults: { ease: 'power2.inOut' } });
+
+// ── Phase 1: Title appears ────────────────────────────────────────────────
+tl.to(title, { alpha: 1, duration: 1.2 }, 0.6);
+tl.to(rule,  { alpha: 1, duration: 0.8 }, 1.2);
+
+// ── Phase 2: Branch lines draw ────────────────────────────────────────────
+tl.to(proxy, {
+  stem: 1, duration: 0.6,
+  onUpdate: redrawLines,
+}, '+=0.6');
+
+tl.to(proxy, {
+  branch: 1, duration: 0.8,
+  onUpdate: redrawLines,
+}, '+=0.05');
+
+// ── Phase 3: Column labels ────────────────────────────────────────────────
+tl.to(declCol, { alpha: 1, duration: 0.7 }, '-=0.35');
+tl.to(procCol, { alpha: 1, duration: 0.7 }, '-=0.55');
+
+// ── Phase 4: Bullets stagger in ───────────────────────────────────────────
+const BULLET_DELAY = 0.22;
+declBullets.forEach((b, i) => {
+  tl.to(b, { alpha: 1, duration: 0.5 }, i === 0 ? '+=0.4' : `+=${BULLET_DELAY}`);
+});
+procBullets.forEach((b, i) => {
+  tl.to(b, { alpha: 1, duration: 0.5 }, i === 0 ? '+=0.4' : `+=${BULLET_DELAY}`);
+});
+
+// ── Phase 5: Visual icons ─────────────────────────────────────────────────
+tl.to(declVis, { alpha: 1, duration: 0.7 }, '+=0.5');
+tl.to(procVis, { alpha: 1, duration: 0.7 }, '-=0.5');
+
+// ── Phase 6: Spotlight declarative, caption 1 ─────────────────────────────
+tl.to(procCol,  { alpha: 0.12, duration: 0.9 }, '+=0.9');
+tl.to(caption, {
+  alpha: 1, duration: 0.7,
+  onStart() { caption.text = 'Most AI "memory" features stop here.'; },
+}, '-=0.5');
+
+// ── Phase 7: Swap spotlight, caption 2 ────────────────────────────────────
+tl.to(caption,  { alpha: 0, duration: 0.4 }, '+=2.2');
+tl.to(procCol,  { alpha: 1, duration: 0.8 }, '-=0.3');
+tl.to(declCol,  { alpha: 0.12, duration: 0.8 }, '-=0.8');
+tl.to(caption, {
+  alpha: 1, duration: 0.7,
+  onStart() { caption.text = 'Hermes adds procedural memory to the agent.'; },
+}, '-=0.45');
+
+// ── Phase 8: SKILL.md card materialises ───────────────────────────────────
+tl.to(skillCard, { alpha: 1, duration: 0.9, ease: 'power3.out' }, '+=1.8');
+tl.to(caption, { alpha: 0, duration: 0.4 }, '-=0.5');
+tl.to(caption, {
+  alpha: 1, duration: 0.8,
+  onStart() { caption.text = 'And the agent writes it itself.'; },
+}, '+=0.1');
+
+// gentle heartbeat pulse on card
+tl.to(skillCard.scale, { x: 1.055, y: 1.055, duration: 0.35, ease: 'power1.inOut' }, '+=0.3');
+tl.to(skillCard.scale, { x: 1.0,   y: 1.0,   duration: 0.35, ease: 'power1.inOut' });
+
+// ── cursor blink loop (starts when card appears) ──────────────────────────
+gsap.to(cursor, {
+  alpha: 0, duration: 0.55,
+  repeat: -1, yoyo: true, ease: 'steps(1)',
+  delay: tl.duration() - 2.5,
+});
+
+// hold on last frame
+tl.to({}, { duration: 2.5 });
+
+</script>
+</body>
+</html>
